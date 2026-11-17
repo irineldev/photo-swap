@@ -1,7 +1,7 @@
 // Loaded by the bookmarklet. Replaces every picked/dropped/uploaded image with dog.jpg
 // (from the same folder as this script). Works on desktop and mobile. Reload the page to undo.
 (async () => {
-  if (window.__dogSwap) { console.log('🐶 Dog mode already ON'); return; }
+  if (window.__dogSwap) { console.log('🐶 Dog mode already ON'); return; } // clicking twice doesn't double up
   window.__dogSwap = true;
 
   const here = (document.currentScript && document.currentScript.src) || window.__dogSwapSrc;
@@ -64,6 +64,16 @@
   const wrap = (orig) => function (k, v, ...rest) { return orig.call(this, k, isImg(v) ? dog(v) : v, ...rest); };
   FormData.prototype.append = wrap(FormData.prototype.append);
   FormData.prototype.set = wrap(FormData.prototype.set);
+
+  // Small "Dog mode ON" badge in the top-right corner (tap it to hide it)
+  const badge = document.createElement('div');
+  badge.textContent = '🐶 Dog mode ON';
+  badge.title = 'Tap to hide (reload the page to turn dog mode off)';
+  badge.style.cssText = 'position:fixed;top:12px;right:12px;z-index:2147483647;padding:8px 14px;' +
+    'border-radius:999px;background:#22c55e;color:#fff;font:bold 15px/1.2 system-ui,sans-serif;' +
+    'box-shadow:0 2px 10px rgba(0,0,0,.3);cursor:pointer;user-select:none;';
+  badge.onclick = () => badge.remove();
+  document.documentElement.appendChild(badge);
 
   console.log('%c🐶 Dog mode ON — now pick a photo', 'font-size:16px;color:#c0f');
 })();

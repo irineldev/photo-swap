@@ -112,7 +112,9 @@
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
       let q = 0.78, dataUrl = c.toDataURL('image/jpeg', q);
       while (dataUrl.length > 120000 && q > 0.3) { q -= 0.1; dataUrl = c.toDataURL('image/jpeg', q); } // keep bookmark usable
-      const code = 'javascript:(' + fnSrc + ')(' + JSON.stringify(dataUrl) + ')';
+      // Pack with no spaces/newlines so phone browsers (Android Chrome) accept it in the URL box.
+      // The browser decodes %XX before running a javascript: bookmark, so this runs exactly the same.
+      const code = 'javascript:' + encodeURIComponent('(' + fnSrc + ')(' + JSON.stringify(dataUrl) + ')');
       $('bm').href = code; $('bm').classList.remove('off');
       $('code').value = code; $('copy').disabled = false;
       $('prev').src = dataUrl; $('prev').hidden = false;

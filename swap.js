@@ -1,4 +1,4 @@
-// Loaded by the bookmarklet. Replaces every picked/dropped/uploaded image with dog.jpg
+// Loaded by the bookmarklet. Replaces every picked/dropped/pasted/uploaded image with dog.jpg
 // (from the same folder as this script). Works on desktop and mobile. Reload the page to undo.
 (async () => {
   if (window.__dogSwap) { console.log('🐶 Dog mode already ON'); return; } // clicking twice doesn't double up
@@ -24,46 +24,85 @@
     f.__swapped = true;
     return f;
   };
-  const isImg = (v) => v instanceof Blob && !v.__swapped && /^image\//.test(v.type);
+  // Duck-typed so it also recognises files coming from iframes (different Blob class)
+  const isImg = (v) => !!v && typeof v === 'object' && !v.__swapped &&
+    typeof v.type === 'string' && /^image\//.test(v.type) && typeof v.arrayBuffer === 'function';
+  const hasImg = (files) => !!files && [...files].some(isImg);
   const swapList = (files) => {
     const dt = new DataTransfer();
     [...files].forEach((f) => dt.items.add(isImg(f) ? dog(f) : f));
     return dt;
   };
 
-  // 1) File picker / phone camera: swap BEFORE the site's own handler runs (capture phase)
-  window.addEventListener('change', (e) => {
-    const inp = e.target;
-    if (!(inp instanceof HTMLInputElement) || inp.type !== 'file' || !inp.files.length) return;
-    if (![...inp.files].some(isImg)) return;
-    try { inp.files = swapList(inp.files).files; } catch (_) { /* old browser: safety net below still works */ }
-  }, true);
+  // Install every hook into a window (the page itself, and same-origin iframes)
+  const install = (w) => {
+    try { if (!w || w.__dogHooked) return; w.__dogHooked = true; } catch (_) { return; } // cross-origin frame
 
-  // 2) Drag & drop (desktop): block the real drop and re-fire one carrying the dog
-  window.addEventListener('drop', (e) => {
-    if (e.__swapped || !e.dataTransfer || ![...e.dataTransfer.files].some(isImg)) return;
-    e.preventDefault(); e.stopImmediatePropagation();
-    const fake = new DragEvent('drop', {
-      bubbles: true, cancelable: true, clientX: e.clientX, clientY: e.clientY,
-      dataTransfer: swapList(e.dataTransfer.files),
-    });
-    fake.__swapped = true;
-    e.target.dispatchEvent(fake);
-  }, true);
+    // 1) File picker / phone camera: swap BEFORE the site's own handler runs (capture phase)
+    w.addEventListener('change', (e) => {
+      const inp = e.target;
+      if (!inp || inp.tagName !== 'INPUT' || inp.type !== 'file' || !hasImg(inp.files)) return;
+      try { inp.files = swapList(inp.files).files; } catch (_) { /* hooks below still catch the upload */ }
+    }, true);
 
-  // 3) Paste an image (Ctrl/Cmd+V): same trick
-  window.addEventListener('paste', (e) => {
-    if (e.__swapped || !e.clipboardData || ![...e.clipboardData.files].some(isImg)) return;
-    e.preventDefault(); e.stopImmediatePropagation();
-    const fake = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: swapList(e.clipboardData.files) });
-    fake.__swapped = true;
-    e.target.dispatchEvent(fake);
-  }, true);
+    // 2) Drag & drop: block the real drop and re-fire one carrying the dog
+    w.addEventListener('drop', (e) => {
+      if (e.__swapped || !e.dataTransfer || !hasImg(e.dataTransfer.files)) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      const fake = new w.DragEvent('drop', {
+        bubbles: true, cancelable: true, clientX: e.clientX, clientY: e.clientY,
+        dataTransfer: swapList(e.dataTransfer.files),
+      });
+      fake.__swapped = true;
+      e.target.dispatchEvent(fake);
+    }, true);
 
-  // 4) Safety net: swap any image right when it's put into the upload request
-  const wrap = (orig) => function (k, v, ...rest) { return orig.call(this, k, isImg(v) ? dog(v) : v, ...rest); };
-  FormData.prototype.append = wrap(FormData.prototype.append);
-  FormData.prototype.set = wrap(FormData.prototype.set);
+    // 3) Paste an image (Ctrl/Cmd+V): same trick
+    w.addEventListener('paste', (e) => {
+      if (e.__swapped || !e.clipboardData || !hasImg(e.clipboardData.files)) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      const fake = new w.ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: swapList(e.clipboardData.files) });
+      fake.__swapped = true;
+      e.target.dispatchEvent(fake);
+    }, true);
+
+    // 4) Upload sent as a form
+    const wrapFD = (orig) => function (k, v, ...rest) { return orig.call(this, k, isImg(v) ? dog(v) : v, ...rest); };
+    w.FormData.prototype.append = wrapFD(w.FormData.prototype.append);
+    w.FormData.prototype.set = wrapFD(w.FormData.prototype.set);
+
+    // 5) Upload sent as the raw file (XHR or fetch with the image as the whole body)
+    const xSend = w.XMLHttpRequest.prototype.send;
+    w.XMLHttpRequest.prototype.send = function (body) { return xSend.call(this, isImg(body) ? dog(body) : body); };
+    const oFetch = w.fetch;
+    w.fetch = function (input, init) {
+      if (init && isImg(init.body)) init = Object.assign({}, init, { body: dog(init.body) });
+      return oFetch.call(this, input, init);
+    };
+
+    // 6) Newer file picker used by some web apps (showOpenFilePicker)
+    if (w.showOpenFilePicker) {
+      const oPick = w.showOpenFilePicker.bind(w);
+      w.showOpenFilePicker = async (...a) => (await oPick(...a)).map((h) => {
+        const getFile = h.getFile.bind(h);
+        return new Proxy(h, { get: (t, p) => p === 'getFile'
+          ? async () => { const f = await getFile(); return isImg(f) ? dog(f) : f; }
+          : (typeof t[p] === 'function' ? t[p].bind(t) : t[p]) });
+      });
+    }
+  };
+
+  // Hook this page + any same-origin iframes, now and when new ones appear
+  const hookFrames = (root) => root.querySelectorAll('iframe').forEach((f) => {
+    try { install(f.contentWindow); } catch (_) {}
+    f.addEventListener('load', () => { try { install(f.contentWindow); } catch (_) {} });
+  });
+  install(window);
+  hookFrames(document);
+  new MutationObserver((muts) => muts.forEach((m) => m.addedNodes.forEach((n) => {
+    if (n.nodeType !== 1) return;
+    if (n.tagName === 'IFRAME') hookFrames(n.parentNode || document); else hookFrames(n);
+  }))).observe(document.documentElement, { childList: true, subtree: true });
 
   // Small "Dog mode ON" badge in the top-right corner (tap it to hide it)
   const badge = document.createElement('div');
